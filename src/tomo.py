@@ -106,3 +106,51 @@ def add_poisson_gaussian_noise(
     sino_noisy = A.range.element(-np.log(I_arr / I0))
 
     return sino_noisy
+
+def add_poisson_noise(sino, A, I0=2e4,
+                      seed_poisson=0,
+                      clamp_min=1.0
+                      ):
+    """
+    Add Poisson noise to a sinogram using an exponential attenuation model.
+    Returns a noisy log-sinogram in A.range.
+    """
+    # Convert to NumPy for exponentiation
+    p = sino.asarray()
+
+    # Expected photon counts
+    lam = A.range.element(I0 * np.exp(-p))
+
+    # Poisson noise
+    I = poisson_noise(lam, seed=seed_poisson)
+
+    # Clamp and log
+    I_arr = np.maximum(I.asarray(), clamp_min)
+    sino_noisy = A.range.element(-np.log(I_arr / I0))
+
+    return sino_noisy
+
+
+def add_gaussian_noise(sino, A, I0=2e4,
+                       sigma=0.0, seed_gaussian=1,
+                       clamp_min=1.0):
+    """
+    Add Gaussian noise in the *counts domain*,
+    without Poisson noise. Returns a noisy log-sinogram in A.range.
+    """
+    # Convert to NumPy for exponentiation
+    p = sino.asarray()
+
+    # Expected photon counts (deterministic counts, no Poisson draw)
+    I = A.range.element(I0 * np.exp(-p))
+
+    # Gaussian noise (counts)
+    if sigma > 0:
+        I = I + white_noise(A.range, mean=0.0, stddev=sigma, seed=seed_gaussian)
+
+    # Clamp and log
+    I_arr = np.maximum(I.asarray(), clamp_min)
+    sino_noisy = A.range.element(-np.log(I_arr / I0))
+
+    return sino_noisy
+
