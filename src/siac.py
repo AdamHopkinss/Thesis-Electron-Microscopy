@@ -63,6 +63,7 @@ def siac_hat_1d(omega: np.ndarray, cgam: np.ndarray, BSorder: int, h: float):
     
     # dimensionless freq variable
     w = h * omega
+    #w = omega
     
     # cosine sum
     cgamterm = cgam[0] * np.ones_like(w, dtype=float)
