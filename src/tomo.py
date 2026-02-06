@@ -46,7 +46,7 @@ def reconstruct_bp(sino, A):
     return A.adjoint(sino)
 
 
-def reconstruct_fbp(sino, A, filter_name="Shepp-Logan"):
+def reconstruct_fbp(sino, A, filter_name="Ram-Lak"):
     """
     Filtered backprojection with specified filter.
     """

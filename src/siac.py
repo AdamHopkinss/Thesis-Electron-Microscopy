@@ -1,11 +1,16 @@
-import math
+# This file contains functions to apply the SIAC filter axis-wise
+
 import numpy as np
+import math
+
 from scipy.special import binom
 import scipy.linalg   # SciPy Linear Algebra Library                                                                                                                
 from scipy.linalg import lu
 from scipy.linalg import lu_factor
 from scipy.linalg import lu_solve
 
+
+##_______________________Helper functions_____________________________________##
 
 def siac_cgam(moments: int, BSorder: int):
     """
@@ -53,7 +58,7 @@ def siac_cgam(moments: int, BSorder: int):
     # print('Sum of coefficients',sumcoeff) 
     return cgam
     
-    
+
 def siac_hat_1d(omega: np.ndarray, cgam: np.ndarray, BSorder: int, h: float):
     """
     omega: radian frequencies (should be same shape as FFT freq grid)
@@ -78,71 +83,87 @@ def siac_hat_1d(omega: np.ndarray, cgam: np.ndarray, BSorder: int, h: float):
     return sinc_factor * cgamterm
 
 
-def pad_image_for_fft(img: np.ndarray, moments: int, BSorder: int, pad_mode: str = "reflect"):
-    """
-    Pad an image before FFT-based filtering.
-    """
-    # Ny, Nx = img.shape
-    # Approximate SIAC support radius in grid points
+def _siac_support_pad(moments: int, BSorder: int) -> int:
+    # mirror your existing heuristic
     R = int(np.ceil((moments + BSorder + 1) / 2))
-    pad = R + 2     # safety margin
-
-    img_pad = np.pad(img, ((pad, pad), (pad, pad)), mode=pad_mode)
-    return img_pad, pad, pad
+    return R + 2
 
 
-def apply_separable_freq_filter_2d(img_pad: np.ndarray, dx: float, dy: float,
-                                  Sx: np.ndarray, Sy: np.ndarray):
-    """
-    Apply a separable 2D frequency-domain filter to the padded image.
-    """
-    # FFT of padded image
-    F = np.fft.fft2(img_pad)
+def _siac_freq_response_1d(N: int, d: float, moments: int, BSorder: int, cgam: np.ndarray):
+    omega = 2.0 * np.pi * np.fft.fftfreq(N, d=d)      # radian freq
+    S = siac_hat_1d(omega, cgam, BSorder, h=d)        # shape (N,)
+    return S
+##____________________________________________________________________________##
 
-    # Broadcast multiply to form full 2D response Sy[:,None] * Sx[None,:]
-    # Shape: (Ny2, 1) * (1, Nx2) -> (Ny2, Nx2)
-    F *= (Sy[:, None] * Sx[None, :])
+##_______________________Main function________________________________________##
 
-    # Back to spatial domain. take real part (imaginary roundoff errors)
-    out_pad = np.real(np.fft.ifft2(F))
-    return out_pad
-
-
-def apply_siac_fft_2d(img: np.ndarray, dx: float, dy: float,
-                      moments: int = 6, BSorder: int = 2,
+def apply_siac_fft_nd(arr: np.ndarray,
+                      h_per_axis,
+                      moments: int = 6,
+                      BSorder: int = 2,
+                      axes=(0, 1),
                       pad_mode: str = "reflect"):
     """
-    SIAC post-processing on a voxel image using a separable FFT filter.
+    Apply SIAC via 1D FFT along specified axis/axes of an N-D array.
 
-    Steps:
-      1) Compute SIAC coefficients c_gamma (moment-fitting).
-      2) Pad image to reduce FFT wrap-around artifacts.
-      3) Build radian frequency grids (2π * fftfreq) using dx, dy.
-      4) Evaluate 1D SIAC transfer function in x and y.
-      5) Apply separable 2D filter in Fourier domain.
-      6) Crop back to original size.
+    Parameters
+    ----------
+    arr : ndarray
+        Input array (image, sinogram, volume, etc.)
+    h_per_axis : float or sequence
+        Grid spacing per axis. If scalar, uses same spacing for all axes.
+        If sequence, must have length of how many axes exists and spacing is taken as h_per_axis[axis].
+    axes : int or iterable of int
+        Which axes to filter along (e.g. (0,1) for 2D image; (0) for first axis only etc.).
     """
-    # 1)
+    x = np.asarray(arr, dtype=float)
+
+    if np.isscalar(h_per_axis):
+        h_per_axis = [float(h_per_axis)] * x.ndim
+    else:
+        h_per_axis = list(h_per_axis)
+        if len(h_per_axis) != x.ndim:
+            raise ValueError("h_per_axis must be scalar or length arr.ndim")
+
+    # normalize axes
+    if isinstance(axes, (int, np.integer)):
+        axes = [int(axes)]
+    else:
+        axes = list(axes)
+
+    axes = [ax if ax >= 0 else ax + x.ndim for ax in axes]
+
+    # coefficients once
     cgam = siac_cgam(moments, BSorder)
+    pad = _siac_support_pad(moments, BSorder)
 
-    # 2)
-    img_pad, py, px = pad_image_for_fft(img, moments=moments, BSorder=BSorder, pad_mode=pad_mode)
-    Ny2, Nx2 = img_pad.shape
+    # Padding is applied ONCE in all dimensions.
+    # If padding in the axes loop, then the second padding can be affected by the first SIAC result (not relevant if SIAC applied to one axis only)
+    pad_width = [(pad, pad)] * x.ndim
+    xpad = np.pad(x, pad_width, mode=pad_mode)
 
-    # 3)
-    omegax = 2.0 * np.pi * np.fft.fftfreq(Nx2, d=dx)  # shape (Nx2,)
-    omegay = 2.0 * np.pi * np.fft.fftfreq(Ny2, d=dy)  # shape (Ny2,)
+    # apply along each requested axis
+    for ax in axes:
+        h = h_per_axis[ax]
+        Np = xpad.shape[ax]
 
-    # 4)
-    Sx = siac_hat_1d(omegax, cgam, BSorder, h=dx)  # (Nx2,)
-    Sy = siac_hat_1d(omegay, cgam, BSorder, h=dy)  # (Ny2,)
-    # print("Sx(0) =", Sx[0], "Sy(0) =", Sy[0], "    (both should be ~1)")
+        omega = 2.0 * np.pi * np.fft.fftfreq(Np, d=h)
+        S = siac_hat_1d(omega, cgam, BSorder, h=h)  # (Np,)
 
-    # 5)
-    out_pad = apply_separable_freq_filter_2d(img_pad, dx, dy, Sx=Sx, Sy=Sy)
+        F = np.fft.fft(xpad, axis=ax)
 
-    # 6)
-    Ny, Nx = img.shape
-    out = out_pad[py:py + Ny, px:px + Nx]
-    return out
+        shape = [1] * xpad.ndim
+        shape[ax] = Np
+        F *= S.reshape(shape)
+
+        xpad = np.real(np.fft.ifft(F, axis=ax))
+
+    # crop once
+    crop_slices = []
+    for ax in range(x.ndim):
+        start = pad
+        stop  = pad + x.shape[ax]
+        crop_slices.append(slice(start, stop))
+
+    return xpad[tuple(crop_slices)]
 
