@@ -20,7 +20,7 @@ def rel_l2_err(x: np.ndarray, xtrue: np.ndarray):
     return np.linalg.norm(x - xtrue) / np.linalg.norm(xtrue)
 
 
-def phantom_support_mask(truth, tau=1e-8, pad_pixels=2, keep_largest=True):
+def phantom_support_mask(truth, tau=1e-8, pad_pixels=2, keep_largest=False):
     """
     Build a binary mask for the compact support of the phantom, including
     interior zero-valued regions, and optionally dilate it by `pad_pixels`.
@@ -71,6 +71,9 @@ def masked_rel_l2_err(
     xtrue: np.ndarray,
     mask: np.ndarray | None = None,
     eps: float = 1e-14,
+    mask_tau: float = 1e-8,
+    mask_pad_pixels: int = 2,
+    mask_keep_largest: bool = False,
 ):
     """
     Masked relative L2 error with respect to the ground truth.
@@ -88,7 +91,12 @@ def masked_rel_l2_err(
         raise ValueError("x and xtrue must have the same shape")
 
     if mask is None:
-        mask = phantom_support_mask(truth, tau=1e-8, pad_pixels=2)
+        mask = phantom_support_mask(
+            truth,
+            tau=mask_tau,
+            pad_pixels=mask_pad_pixels,
+            keep_largest=mask_keep_largest,
+        )
     else:
         mask = np.asarray(mask, dtype=bool)
 
@@ -324,6 +332,7 @@ def eval_metrics(
     mask: np.ndarray | None = None,
     mask_pad_pixels: int = 2,
     mask_tau: float = 1e-8,
+    mask_keep_largest: bool = False,
 ):
     """
     Evaluate metrics for one image.
@@ -386,7 +395,10 @@ def eval_metrics(
         if compute_masked_rel_l2:
             if mask is None:
                 mask_use = phantom_support_mask(
-                    truth, tau=mask_tau, pad_pixels=mask_pad_pixels
+                    truth,
+                    tau=mask_tau,
+                    pad_pixels=mask_pad_pixels,
+                    keep_largest=mask_keep_largest,
                 )
             else:
                 mask_use = np.asarray(mask, dtype=bool)
@@ -436,6 +448,7 @@ def build_metrics_table(
     hf_frac: float = 0.6,
     data_range=None,
     compute_reference_metrics: bool = True,
+    mask_keep_largest: bool = False,
 ):
     """
     Build a metrics table for multiple named cases.
@@ -504,6 +517,7 @@ def build_metrics_table(
             data_range=data_range,
             extra=case_extra,
             compute_reference_metrics=compute_reference_metrics,
+            mask_keep_largest=mask_keep_largest,
         )
         rows.append(row)
 
@@ -520,10 +534,23 @@ def build_metrics_table(
 
 ### Metric functions for the Monte Carlo simulation ###
 
-def compute_metrics(recon, reference):
+def compute_metrics(recon, reference, phantom="shepp_logan"):
     
+    if phantom == "shepp_logan":
+        mask_keep_largest = True
+    elif phantom in ["multi_disk", "circles", "disk"]:
+        mask_keep_largest = False
+    else:
+        mask_keep_largest = False
+
     rel_l2 = rel_l2_err(x=recon, xtrue=reference)
-    masked_rel_l2 = masked_rel_l2_err(x=recon, xtrue=reference)
+
+    masked_rel_l2 = masked_rel_l2_err(
+        x=recon,
+        xtrue=reference,
+        mask_keep_largest=mask_keep_largest,
+    )
+
     gw_ssim_val = gradient_weighted_ssim(image=recon, truth=reference)
     ssim_val = ssim(x=recon, xtrue=reference)
     
@@ -531,21 +558,25 @@ def compute_metrics(recon, reference):
         "rel_l2_err": rel_l2,
         "masked_rel_l2_err": masked_rel_l2, 
         "gw_ssim": gw_ssim_val, 
-        "ssim": ssim_val 
+        "ssim": ssim_val,
     }
+
     return metric_dict
     
+def make_method_variant(row):
+    method = row["method"]
 
-def summarize_mc_results(
-    results_df,
-    group_cols=None,
-    metric_cols=None,
-):
-    """
-    Summarize Monte Carlo results by computing mean/std for each metric.
-    """
+    if method == "post_recon_dg_siac" and pd.notna(row["p"]):
+        return f"{method}_p{int(row['p'])}"
+
+    return method
+
+def summarize_mc_results(results_df, group_cols=None, metric_cols=None):
     if group_cols is None:
-        candidate_group_cols = ["family", "method", "noise_level", "p", "moments", "BSorder"]
+        candidate_group_cols = [
+            "family", "method", "method_variant",
+            "noise_level", "p", "moments", "BSorder"
+        ]
         group_cols = [c for c in candidate_group_cols if c in results_df.columns]
 
     if metric_cols is None:
@@ -555,18 +586,15 @@ def summarize_mc_results(
             if c not in exclude and pd.api.types.is_numeric_dtype(results_df[c])
         ]
 
-    agg_dict = {}
-    for col in metric_cols:
-        agg_dict[col] = ["mean", "std", "min", "max"]
+    agg_dict = {col: ["mean", "std", "min", "max"] for col in metric_cols}
 
     summary = results_df.groupby(group_cols, dropna=False).agg(agg_dict)
 
     summary.columns = [
         f"{metric}_{stat}" for metric, stat in summary.columns.to_flat_index()
     ]
-    summary = summary.reset_index()
 
-    return summary
+    return summary.reset_index()
 
 def select_best_by_noise(
     summary_df,
@@ -731,7 +759,7 @@ def display_fixed_params(
         df = df[~df["family"].isin(exclude_families)]
 
     cols = []
-    for c in ["family", "method", "p", "moments", "BSorder"]:
+    for c in ["family", "method_variant", "method", "p", "moments", "BSorder"]:
         if c in df.columns:
             cols.append(c)
 
@@ -741,6 +769,6 @@ def display_fixed_params(
 
     display(
         df[cols]
-        .sort_values("method")
+        .sort_values("method_variant")
         .reset_index(drop=True)
     )

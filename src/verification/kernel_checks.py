@@ -56,47 +56,75 @@ def check_kernel_integral(moments, BSorder):
     return val
 
 
-def build_siac_system(moments: int, BSorder: int):
+def build_siac_system(moments: int, BSorder: int, build_full: bool = False):
     """
-    Build the c_gam system: A*cgam = b 
+    Build SIAC coefficient system.
+
+    If build_full=True:
+        returns full system for shifts -RS,...,RS and moments 0,...,r.
+
+    If build_full=False:
+        returns reduced symmetric system using only even moments and
+        unknowns [c_0,c_1,...,c_RS].
     """
-    if moments % 2 != 0:
-        raise ValueError("moments must be even.")
+    assert moments % 2 == 0, "moments should be even!"
 
     RS = int(np.ceil(moments / 2))
     numspline = moments + 1
 
-    A = np.zeros((numspline, numspline), dtype=float)
+    # First build full system
+    A_full = np.zeros((numspline, numspline), dtype=float)
 
     for m in range(numspline):
         for gam in range(numspline):
             component = 0.0
+            shift = gam - RS
 
             for n in range(m + 1):
                 jsum = sum(
-                    (-1) ** (j + BSorder - 1)
+                    (-1)**(j + BSorder - 1)
                     * binom(BSorder - 1, j)
                     * (
-                        (j - 0.5 * (BSorder - 2)) ** (BSorder + n)
-                        - (j - 0.5 * BSorder) ** (BSorder + n)
+                        (j - 0.5 * (BSorder - 2))**(BSorder + n)
+                        - (j - 0.5 * BSorder)**(BSorder + n)
                     )
                     for j in range(BSorder)
                 )
 
                 component += (
                     binom(m, n)
-                    * (gam - RS) ** (m - n)
-                    * math.factorial(n)
-                    / math.factorial(n + BSorder)
+                    * shift**(m - n)
+                    * math.factorial(n) / math.factorial(n + BSorder)
                     * jsum
                 )
 
-            A[m, gam] = component
+            A_full[m, gam] = component
 
-    b = np.zeros(numspline, dtype=float)
-    b[0] = 1.0
+    b_full = np.zeros(numspline)
+    b_full[0] = 1.0
 
-    return A, b, RS
+    if build_full:
+        return A_full, b_full, RS
+
+    # Reduced symmetric system
+    even_rows = np.arange(0, moments + 1, 2)
+    R = RS + 1
+
+    A_red = np.zeros((R, R), dtype=float)
+
+    # center column, shift 0
+    A_red[:, 0] = A_full[even_rows, RS]
+
+    # paired columns, shifts +/-k
+    for k in range(1, RS + 1):
+        A_red[:, k] = (
+            A_full[even_rows, RS - k]
+            + A_full[even_rows, RS + k]
+        )
+
+    b_red = b_full[even_rows]
+
+    return A_red, b_red, RS
 
 
 def solve_siac_system(A, b):
@@ -106,13 +134,6 @@ def solve_siac_system(A, b):
     piv = scipy.linalg.lu_factor(A)
     cgam = scipy.linalg.lu_solve(piv, b)
     return cgam
-
-def siac_cgam(moments: int, BSorder: int):
-    """
-    Compute SIAC coefficients c_gamma from the moment system.
-    """
-    A, b, _ = build_siac_system(moments, BSorder)
-    return solve_siac_system(A, b)
 
 def symmetry_error(cgam):
     """
@@ -144,7 +165,6 @@ def siac_standard_kernel_diagnostics(p_values, print_coeffs=False):
 
     Prints:
     - condition number of A
-    - symmetry defect of cgam
     - relative residual of the solve
     - max coefficient size
 
@@ -167,41 +187,37 @@ def siac_standard_kernel_diagnostics(p_values, print_coeffs=False):
     print("=" * 120)
     print(
         f"{'p':>3} {'moments':>8} {'BSorder':>8} "
-        f"{'cond(A)':>16} {'sym abs':>14} {'sym rel':>14} "
+        f"{'cond(A_red)':>16}"
         f"{'rel residual':>16} {'max|c|':>14}"
     )
     print("-" * 120)
 
     for p in p_values:
-        moments = 2 * p
-        BSorder = p + 1
+        moments = 2*p
+        BSorder = p+1
 
         A, b, RS = build_siac_system(moments, BSorder)
         cgam = solve_siac_system(A, b)
 
         condA = np.linalg.cond(A)
-        sym_abs = symmetry_error(cgam)
-        sym_rel = relative_symmetry_error(cgam)
+        
         rel_res = relative_residual(A, cgam, b)
         max_c = np.max(np.abs(cgam))
 
         results.append({
             "p": p,
-            "moments": moments,
+            "moments": moments + 1,
             "BSorder": BSorder,
             "RS": RS,
             "condA": condA,
-            "sym_abs": sym_abs,
-            "sym_rel": sym_rel,
             "rel_residual": rel_res,
             "max_abs_cgam": max_c,
             "cgam": cgam,
         })
 
         print(
-            f"{p:3d} {moments:8d} {BSorder:8d} "
-            f"{condA:16.6e} {sym_abs:14.6e} {sym_rel:14.6e} "
-            f"{rel_res:16.6e} {max_c:14.6e}"
+            f"{p:3d} {moments + 1:8d} {BSorder:8d} "
+            f"{condA:16.6e} {rel_res:16.6e} {max_c:14.6e}"
         )
 
         if print_coeffs:
@@ -211,7 +227,7 @@ def siac_standard_kernel_diagnostics(p_values, print_coeffs=False):
     return results
 
 
-def summarize_siac_diagnostics(results, cond_warn=1e12, sym_warn=1e-10, res_warn=1e-10):
+def summarize_siac_diagnostics(results, cond_warn=1e12, res_warn=1e-10):
     print("\nSummary warnings:")
     any_warn = False
 
@@ -219,8 +235,6 @@ def summarize_siac_diagnostics(results, cond_warn=1e12, sym_warn=1e-10, res_warn
         flags = []
         if row["condA"] > cond_warn:
             flags.append(f"cond(A)>{cond_warn:.1e}")
-        if row["sym_abs"] > sym_warn:
-            flags.append(f"sym_abs>{sym_warn:.1e}")
         if row["rel_residual"] > res_warn:
             flags.append(f"rel_res>{res_warn:.1e}")
 
@@ -264,7 +278,8 @@ def plot_siac_kernel_over_mesh(moments, BSorder, h=1.0, points=2000):
     for g in gammas:
         plt.axvline(g, linestyle="--", linewidth=0.8, alpha=0.4)
 
-    plt.title(f"1D SIAC kernel over a uniform mesh (moments={moments}, BSorder={BSorder})")
+
+    plt.title(f"1D SIAC kernel over a uniform mesh (moments={moments + 1}, BSorder={BSorder})")
     plt.xlabel("Element-coordinate x")
     plt.ylabel("Kernel value")
     plt.legend()
@@ -273,11 +288,18 @@ def plot_siac_kernel_over_mesh(moments, BSorder, h=1.0, points=2000):
 
     print("c_gamma coefficients:")
     for g, c in zip(gammas, cgam):
-        print(f"gamma = {g:2d}, c_gamma = {c: .16e}")
+        print(f"gamma = {g:2d}, c_gamma = {c: .6f}")
+        
+    from fractions import Fraction
+
+    print("c_gamma coefficients (fraction form):")
+    for g, c in zip(gammas, cgam):
+        frac = Fraction(c).limit_denominator(1000)  # adjust max denominator
+        print(f"gamma = {g:2d}, c_gamma ≈ {frac}  (≈ {float(frac):.6f})")
 
     print(f"\nExpected total support: [{-half_support}, {half_support}]")
     
-def plot_siac_kernel_with_components(moments, BSorder, points=2000, show_component_labels=True):
+def plot_siac_kernel_with_components(moments, BSorder, points=2000, show_component_labels=True, save_fig=False):
     cgam = siac_cgam(moments, BSorder)
     psi = centered_cardinal_bspline(BSorder)
 
@@ -294,12 +316,13 @@ def plot_siac_kernel_with_components(moments, BSorder, points=2000, show_compone
     for coeff, gamma in zip(cgam, gammas):
         comp = coeff * psi(x - gamma)
         kernel += comp
-        label = fr"$c_{{{gamma}}}\psi(x-{gamma})$" if show_component_labels else None
+        label = fr"$c_{{{gamma}}}B_{BSorder}(x-{gamma})$" if show_component_labels else None
         plt.plot(x, comp, linestyle="--", alpha=0.7, label=label)
 
     plt.plot(x, kernel, linewidth=2.5, label="Total SIAC kernel")
     plt.axhline(0.0, linewidth=0.8, color='k', alpha=0.4)
-    plt.title(f"SIAC kernel and shifted B-spline components (moments={moments}, BSorder={BSorder})")
+    if save_fig == False:
+        plt.title(f"SIAC kernel and shifted B-spline components (moments={moments + 1}, BSorder={BSorder})")
     plt.xlabel("x")
     plt.ylabel("Value")
     if show_component_labels:
@@ -307,5 +330,7 @@ def plot_siac_kernel_with_components(moments, BSorder, points=2000, show_compone
     else:
         plt.legend()
     plt.tight_layout()
+    if save_fig == True:
+        plt.savefig("figures/SIAC_kernel_visual.pdf", bbox_inches="tight", dpi=300)
     plt.show()
 

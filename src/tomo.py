@@ -21,6 +21,28 @@ def shepp_logan_2d(space, modified=True):
     """
     return odl.phantom.shepp_logan(space, modified=modified)
 
+def multi_disk_phantom_2d(space):
+    """
+    Multi-disk phantom for parameter tuning.
+
+    Compatible with ODL reconstruction pipelines.
+    The phantom is built as a sum of ellipsoids, where circles are
+    represented by ellipsoids with equal semi-axes.
+    """
+
+    # ODL ellipsoid format in 2D:
+    # [value, axis_1, axis_2, center_x, center_y, rotation_angle]
+    ellipsoids = [
+        [1.0, 0.32, 0.32,  0.00,  0.00, 0.0],   # large central disk
+        [0.8, 0.16, 0.16, -0.45,  0.35, 0.0],   # medium disk
+        [0.6, 0.12, 0.12,  0.42,  0.35, 0.0],   # medium/small disk
+        [0.9, 0.10, 0.10, -0.35, -0.35, 0.0],   # small disk
+        [0.5, 0.07, 0.07,  0.35, -0.42, 0.0],   # very small disk
+        [0.7, 0.05, 0.05,  0.05,  0.55, 0.0],   # tiny disk
+    ]
+
+    return odl.phantom.geometric.ellipsoid_phantom(space, ellipsoids)
+
 def parallel_geom_2d(angular_coverage=(-60, 60), step=1,
                      det_range = None, det_count = None):   # det_range=(-1.5, 1.5), det_count=400):
     """

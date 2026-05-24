@@ -104,7 +104,8 @@ def plot_img_zoom(img, title=None, figsize=(5, 5), vmin=0.0, vmax=1.0,
 
 def save_image_w_zoom(img, save_path, figsize=(5, 5), dpi=300,
                       vmin=0.0, vmax=1.0,
-                      zoom_frac=(0.30, 0.70, 0.30, 0.70)):
+                      zoom_frac=(0.30, 0.70, 0.30, 0.70), 
+                      save_zoom=True):
     """
     Save a full image and a zoomed version.
 
@@ -147,19 +148,25 @@ def save_image_w_zoom(img, save_path, figsize=(5, 5), dpi=300,
     plt.close(fig)
 
     # Zoom image
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.imshow(arr_zoom, cmap="gray", vmin=vmin, vmax=vmax)
-    ax.axis("off")
-    fig.savefig(zoom_path, dpi=dpi, bbox_inches="tight", pad_inches=0)
-    plt.close(fig)
+    if save_zoom:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.imshow(arr_zoom, cmap="gray", vmin=vmin, vmax=vmax)
+        ax.axis("off")
+        fig.savefig(zoom_path, dpi=dpi, bbox_inches="tight", pad_inches=0)
+        plt.close(fig)
 
-    return str(save_path), str(zoom_path)
-
+    if save_zoom:
+        return str(save_path), str(zoom_path)
+    else:
+        return str(save_path), None
 # Naming converntion for known methods
 METHOD_LABELS = {
-    "post_recon_dg_siac": "DG-SIAC",
+    "post_recon_dg_siac_p1": r"Nodal-to-Modal, $p=1$",
+    "post_recon_dg_siac_p3": r"Nodal-to-Modal, $p=3$",
+
     "post_recon_fourier_siac": "Fourier-SIAC",
     "pre_recon_detector_siac": "Detector-SIAC",
+
     "fbp_ramlak": "FBP (Ram-Lak)",
     "fbp_hann": "FBP (Hann)",
 }
@@ -179,6 +186,7 @@ def plot_mc_metric(
     title=None,
     ylabel=None,
     show_std=True,
+    save_path=None
 ):
     """
     Plot a summarized MC metric versus noise level.
@@ -302,6 +310,8 @@ def plot_mc_metric(
     ax.grid(True, alpha=0.3)
     ax.legend()
     plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig, ax
 
@@ -326,7 +336,7 @@ def display_best_params(best_df, metric, exclude_families=("FBP",)):
         df = df[~df["family"].isin(exclude_families)]
 
     cols = []
-    for c in ["family", "method", "noise_level", "p", "moments", "BSorder"]:
+    for c in ["family", "method_variant", "method", "noise_level", "p", "moments", "BSorder"]:
         if c in df.columns:
             cols.append(c)
 
@@ -336,7 +346,7 @@ def display_best_params(best_df, metric, exclude_families=("FBP",)):
 
     display(
         df[cols]
-        .sort_values(["method", "noise_level"])
+        .sort_values(["method_variant", "noise_level"])
         .reset_index(drop=True)
     )
     
@@ -389,6 +399,7 @@ def select_best_by_noise(
 
     return best_df
     
+from matplotlib.ticker import MaxNLocator
     
 def plot_selected_param_vs_noise(
     best_df,
@@ -398,6 +409,7 @@ def plot_selected_param_vs_noise(
     exclude_families=("FBP",),
     title=None,
     ylabel=None,
+    save_path=None
 ):
     """
     Plot the selected parameter value versus noise level for each method.
@@ -433,17 +445,28 @@ def plot_selected_param_vs_noise(
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
-    for method, subdf in df.groupby(method_col, dropna=False):
+    markers = ["o", "s", "^", "D"]
+    linestyles = ["-", "--", "-.", ":"]
+
+    for i, (method, subdf) in enumerate(df.groupby(method_col, dropna=False)):
         subdf = subdf.sort_values(noise_col)
 
         x = subdf[noise_col].to_numpy()
         y = subdf[param].to_numpy()
 
         mask = ~pd.isna(y)
-        
+
         pretty_label = get_method_label(method)
+
         if np.any(mask):
-            ax.plot(x[mask], y[mask], marker="o", linewidth=2.0, label=pretty_label)
+            ax.plot(
+                x[mask],
+                y[mask],
+                marker=markers[i % len(markers)],
+                linestyle=linestyles[i % len(linestyles)],
+                linewidth=2.0,
+                label=pretty_label
+            )
 
     ax.set_xlabel("Noise level")
     ax.set_ylabel(ylabel if ylabel is not None else param)
@@ -451,10 +474,12 @@ def plot_selected_param_vs_noise(
     if title is not None:
         ax.set_title(title)
 
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax.grid(True, alpha=0.3)
     ax.legend()
     plt.tight_layout()
-
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
     return fig, ax
 
 
@@ -528,6 +553,98 @@ def plot_param_heatmap(
     plt.tight_layout()
     return fig, ax
 
+def plot_param_heatmap_single_run(
+    df,
+    method,
+    metric,
+    p=None,
+    x_col="BSorder",
+    y_col="moments",
+    fixed_filters=None,
+    title=None,
+    cmap="viridis",
+    mark_best=True,
+    minimize=True,
+    annotate=True,
+    save_name=None,
+):
+
+    data = df.copy()
+
+    # Filter method
+    data = data[data["method"] == method]
+
+    if p is not None:
+        data = data[data["p"] == p]
+
+    if fixed_filters is not None:
+        for col, val in fixed_filters.items():
+            data = data[data[col] == val]
+
+    if data.empty:
+        raise ValueError("No rows left after filtering.")
+
+    pivot = data.pivot(index=y_col, columns=x_col, values=metric)
+    pivot = pivot.sort_index().sort_index(axis=1)
+
+    # Adjust labels for display
+    # pivot.index = pivot.index  # moments -> r
+    # pivot.columns = pivot.columns  # BSorder already n
+
+    fig, ax = plt.subplots(figsize=(6.2, 4.5))
+    im = ax.imshow(pivot.values, origin="lower", aspect="auto", cmap=cmap)
+
+    ax.set_xticks(np.arange(len(pivot.columns)))
+    ax.set_xticklabels([int(x) for x in pivot.columns])
+    ax.set_yticks(np.arange(len(pivot.index)))
+    ax.set_yticklabels([int(y) for y in pivot.index])
+
+    ax.set_xlabel(r"B-spline order $n$")
+    ax.set_ylabel(r"Kernel size $r+1$")
+
+    # Only set title if NOT saving
+    if title is not None and save_name is None:
+        ax.set_title(title)
+
+    cbar = fig.colorbar(im, ax=ax)
+
+    # Only label colorbar if NOT saving
+    if save_name is None:
+        cbar.set_label(metric.replace("_", " "))
+
+    if annotate:
+        for i in range(pivot.shape[0]):
+            for j in range(pivot.shape[1]):
+                val = pivot.iloc[i, j]
+                if pd.notna(val):
+                    ax.text(j, i, f"{val:.3f}", ha="center", va="center", fontsize=8)
+
+    if mark_best:
+        vals = pivot.values.astype(float)
+        idx = np.nanargmin(vals) if minimize else np.nanargmax(vals)
+        i_best, j_best = np.unravel_index(idx, vals.shape)
+        rect = plt.Rectangle(
+            (j_best - 0.5, i_best - 0.5),
+            1,
+            1,
+            fill=False,
+            edgecolor="red",
+            linewidth=2,
+        )
+        ax.add_patch(rect)
+
+    plt.tight_layout()
+
+    # Save if requested
+    if save_name is not None:
+        plt.savefig(f"figures/{save_name}.pdf", dpi=300,
+                    bbox_inches="tight", pad_inches=0)
+        plt.close(fig)
+
+    return fig, ax
+
+from matplotlib.lines import Line2D
+
 def compare_fixed_vs_retuned(
     retuned_df,
     fixed_df,
@@ -537,6 +654,8 @@ def compare_fixed_vs_retuned(
     exclude_families=("FBP",),
     title=None,
     ylabel=None,
+    save_path=None, 
+    legend_places=None
 ):
     mean_col = f"{metric}_mean"
     std_col = f"{metric}_std"
@@ -550,6 +669,9 @@ def compare_fixed_vs_retuned(
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
+    # Store colors for legend
+    method_colors = {}
+
     for method in sorted(df_r[method_col].dropna().unique()):
         sub_retuned = df_r[df_r[method_col] == method].sort_values(noise_col)
         sub_fixed = df_f[df_f[method_col] == method].sort_values(noise_col)
@@ -560,36 +682,98 @@ def compare_fixed_vs_retuned(
         x_f = sub_fixed[noise_col].to_numpy()
         y_f = sub_fixed[mean_col].to_numpy()
 
-        # Retuned (solid)
         pretty_label = get_method_label(method)
-        line, = ax.plot(x_r, y_r, marker="o", linewidth=2.4, label=f"{pretty_label} (retuned)")
 
-        # Fixed (dashed, same color)
+        # --- Retuned (solid) ---
+        line, = ax.plot(
+            x_r,
+            y_r,
+            marker="o",
+            linewidth=2.4,
+            linestyle="-",
+            label=None,  # no label here
+        )
+
+        color = line.get_color()
+        method_colors[method] = color
+
+        # --- Fixed (dashed) ---
         ax.plot(
-            x_f, y_f,
+            x_f,
+            y_f,
             marker="s",
             linestyle="--",
             linewidth=2.0,
-            color=line.get_color(),
-            label=f"{pretty_label} (fixed @ 0.10)",
+            color=color,
+            label=None,  # no label here
         )
 
+        # --- Std bands ---
         if std_col in sub_retuned.columns:
             ystd_r = sub_retuned[std_col].fillna(0.0).to_numpy()
-            ax.fill_between(x_r, y_r - ystd_r, y_r + ystd_r, alpha=0.15, color=line.get_color())
+            ax.fill_between(
+                x_r,
+                y_r - ystd_r,
+                y_r + ystd_r,
+                alpha=0.15,
+                color=color,
+            )
 
         if std_col in sub_fixed.columns:
             ystd_f = sub_fixed[std_col].fillna(0.0).to_numpy()
-            ax.fill_between(x_f, y_f - ystd_f, y_f + ystd_f, alpha=0.10, color=line.get_color())
+            ax.fill_between(
+                x_f,
+                y_f - ystd_f,
+                y_f + ystd_f,
+                alpha=0.10,
+                color=color,
+            )
 
+    # --- Axis ---
     ax.set_xlabel("Noise level")
     ax.set_ylabel(ylabel if ylabel is not None else metric)
 
-    if title is not None:
+    if title is not None and save_path is None:
         ax.set_title(title)
 
     ax.grid(True, alpha=0.3)
-    ax.legend()
+
+    # ==========================================================
+    # Create separate legends
+    # ==========================================================
+
+    # --- Legend 1: Methods (colors) ---
+    method_handles = [
+        Line2D([0], [0], color=method_colors[m], lw=2.4)
+        for m in method_colors
+    ]
+    method_labels = [get_method_label(m) for m in method_colors]
+
+    legend1 = ax.legend(
+        method_handles,
+        method_labels,
+        title="Method",
+        loc=legend_places[1] if legend_places is not None else "upper left",
+    )
+
+    # --- Legend 2: Line styles ---
+    style_handles = [
+        Line2D([0], [0], color="black", lw=2.4, linestyle="-"),
+        Line2D([0], [0], color="black", lw=2.4, linestyle="--"),
+    ]
+    style_labels = ["Retuned", "Fixed (@ 0.10)"]
+
+    legend2 = ax.legend(
+        style_handles,
+        style_labels,
+        title="Selection",
+        loc=legend_places[0] if legend_places is not None else "upper center",
+    )
+
+    ax.add_artist(legend1)
+
     plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", pad_inches=0)
 
     return fig, ax

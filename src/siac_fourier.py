@@ -22,40 +22,66 @@ def siac_cgam_fourier(moments: int, BSorder: int):
 
     Returns
     -------
-    cgam : array of length RS+1 with symmetric coefficients used in the cosine sum
+    cgam : ndarray of length RS+1
+        Symmetric coefficients in cosine-series format:
+        [c_0, c_1, ..., c_RS].
     """
     assert moments % 2 == 0, "moments should be even!"
+    
     RS = int(np.ceil(moments / 2))
+    R = RS + 1
     numspline = moments + 1
     # Define matrix to determine kernel coefficients
     # Linear system A c = b encodes the moment conditions
-    A=np.zeros((numspline, numspline), dtype=float)
-    for m in np.arange(numspline):
-        for gam in np.arange(numspline):
-            component = 0.
-            for n in np.arange(m+1):
-                jsum = 0.
-                jsum = sum((-1)**(j + BSorder-1) * binom(BSorder-1,j) * ((j - 0.5*(BSorder-2))**(BSorder+n) - (j - 0.5*BSorder)**(BSorder+n)) for j in np.arange(BSorder))
-                
-                component += binom(m,n)*(gam-RS)**(m-n) * math.factorial(n)/math.factorial(n+BSorder)*jsum
+    A = np.zeros((R, R), dtype=float)
+    
+    even_moments = np.arange(0, moments + 1, 2)
+    
+    for row, m in enumerate(even_moments):
+        for gam in range(R):
 
-            A[m, gam] = component
+            component = 0.0
+
+            # gam = 0 corresponds to the center shift.
+            # gam > 0 corresponds to the symmetric pair -gam and +gam.
+            if gam == 0:
+                shifts = [0]
+            else:
+                shifts = [-gam, gam]
+
+            for shift in shifts:
+                for n in np.arange(m + 1):
+                    jsum = sum(
+                        (-1)**(j + BSorder - 1)
+                        * binom(BSorder - 1, j)
+                        * (
+                            (j - 0.5 * (BSorder - 2))**(BSorder + n)
+                            - (j - 0.5 * BSorder)**(BSorder + n)
+                        )
+                        for j in np.arange(BSorder)
+                    )
+
+                    component += (
+                        binom(m, n)
+                        * shift**(m - n)
+                        * math.factorial(n) / math.factorial(n + BSorder)
+                        * jsum
+                    )
+
+            A[row, gam] = component
+
+    b = np.zeros(R)
+    b[0] = 1.0
+
                 
     b = np.zeros((numspline))
     b[0] = 1    # consistency (zeroth moment): integral of kernel = 1
     
-    #call the lu_factor function LU = linalg.lu_factor(A)
     Piv = scipy.linalg.lu_factor(A)
-    #P, L, U = scipy.linalg.lu(A)
-    #solve given LU and B
-    cgamtemp = scipy.linalg.lu_solve(Piv, b)
-    cgam = np.zeros((RS + 1))
-    for igam in np.arange(RS+1):
-        cgam[igam] = cgamtemp[RS-igam]
-    
-    # Sanity check: coefficients should sum to ~1 (can be outcommented)
-    # sumcoeff = sum(cgamtemp[n] for n in np.arange(numspline))
-    # print('Sum of coefficients',sumcoeff) 
+    cgam = scipy.linalg.lu_solve(Piv, b)
+
+    # cgam is already [c_0, c_1, ..., c_RS],
+    # matching the Fourier/cosine output format.
     return cgam
 
 def siac_hat_1d(omega: np.ndarray, cgam: np.ndarray, BSorder: int, h: float):

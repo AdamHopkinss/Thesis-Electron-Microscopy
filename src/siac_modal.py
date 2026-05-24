@@ -14,17 +14,17 @@ from scipy.special import eval_legendre
 from src.basis import eval_orthonormal_legendre_1d
 from src.grid import local_cell_center_nodes_1d
 
-def siac_cgam(moments: int, BSorder: int):
+# This old function enforces the full system, not only even moments
+def siac_cgam_OLD(moments: int, BSorder: int):
     """
-    Compute the SIAC cosine-series coefficients c_gamma by enforcing
-    polynomial reproduction (moment conditions).
-
-    moments : even integer r (number of enforced moments)
-    BSorder : B-spline order n (controls smoothness / dissipation)
+    Computes the SIAC coefficients for a symmetric kernel by enforcing
+    only the even moment conditions.
 
     Returns
     -------
-    cgam : array of length RS+1 with symmetric coefficients used in the cosine sum
+    cgam : array of length moments+1
+        coefficient vector in the ordering:
+        [c_{-RS}, ..., c_{-1}, c_0, c_1, ..., c_RS]
     """
     assert moments % 2 == 0, "moments should be even!"
     RS = int(np.ceil(moments / 2))
@@ -55,6 +55,81 @@ def siac_cgam(moments: int, BSorder: int):
     # Artificially enforce symmetry
     # cgam_symm = 0.5 * (cgam + cgam[::-1])
     return cgam
+
+def siac_cgam(moments: int, BSorder: int):
+    """
+    Computes the SIAC coefficients for a symmetric kernel by enforcing
+    only the even moment conditions.
+
+    Returns
+    -------
+    cgam : array of length moments+1
+        Expanded coefficient vector in the old ordering:
+        [c_{-RS}, ..., c_{-1}, c_0, c_1, ..., c_RS]
+    """
+    assert moments % 2 == 0, "moments should be even!"
+
+    RS = int(np.ceil(moments / 2))
+    numspline = moments + 1
+    R = RS + 1
+
+    A = np.zeros((R, R), dtype=float)
+
+    even_moments = np.arange(0, moments + 1, 2)
+
+    for row, m in enumerate(even_moments):
+        for gam in range(R):
+
+            component = 0.0
+
+            if gam == 0:
+                shifts = [0]
+            else:
+                shifts = [-gam, gam]
+
+            for shift in shifts:
+                for n in np.arange(m + 1):
+                    jsum = sum(
+                        (-1)**(j + BSorder - 1)
+                        * binom(BSorder - 1, j)
+                        * (
+                            (j - 0.5 * (BSorder - 2))**(BSorder + n)
+                            - (j - 0.5 * BSorder)**(BSorder + n)
+                        )
+                        for j in np.arange(BSorder)
+                    )
+
+                    component += (
+                        binom(m, n)
+                        * shift**(m - n)
+                        * math.factorial(n) / math.factorial(n + BSorder)
+                        * jsum
+                    )
+
+            A[row, gam] = component
+
+    b = np.zeros(R)
+    b[0] = 1.0
+
+    Piv = scipy.linalg.lu_factor(A)
+    c_red = scipy.linalg.lu_solve(Piv, b)
+
+    # c_red = [c_0, c_1, ..., c_RS]
+    # Expand to format:
+    # [c_{-RS}, ..., c_{-1}, c_0, c_1, ..., c_RS]
+    cgam = np.zeros(numspline)
+
+    cgam[RS] = c_red[0]
+
+    for gam in range(1, R):
+        cgam[RS - gam] = c_red[gam]
+        cgam[RS + gam] = c_red[gam]
+        
+    # Sanity check: coefficients should sum to ~1 (can be outcommented)
+    # sumcoeff = sum(cgam[n] for n in np.arange(numspline))
+    # print('Sum of coefficients',sumcoeff) 
+    return cgam
+
 
 def centered_cardinal_bspline(BSorder):
     """
@@ -124,7 +199,9 @@ def grab_integrals(eval_nodes, p, BSorder, BSsupport, quad_order=None):
 
     for k, zeta in enumerate(eval_nodes):
 
-        # 
+        # Compute split location in reference element to separate integration
+        # across B-spline piecewise regions. This aligns the quadrature with the
+        # dominant breakpoint induced by the shift and spline parity.
         xicell = zeta - np.sign(zeta) * np.mod(BSorder, 2)
         # if BSorder % 2 == 0:
         #     xicell = zeta

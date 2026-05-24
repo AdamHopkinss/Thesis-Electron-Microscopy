@@ -342,7 +342,7 @@ def choose_error_norms(
         "siac_nm": _make_log_norm([siac_nm_err_plot]),
     }, "separate"
 
-def plot_l2_vs_nodal_modal_experiment_2d(results, log_errors=False):
+def plot_l2_vs_nodal_modal_experiment_2d(results, log_errors=False, save_name_l2=None, save_name_nodal=None):
     """
     Plot exact, DG, SIAC, and interior error fields for the
     L2-projection vs nodal->modal comparison experiment.
@@ -532,7 +532,8 @@ def plot_l2_vs_nodal_modal_experiment_2d(results, log_errors=False):
         vmin=vlims["dg_l2"][0] if not log_errors else None,
         vmax=vlims["dg_l2"][1] if not log_errors else None,
     )
-    axes[0].set_title("|DG error| (L2, interior)")
+    if not save_name_l2:
+        axes[0].set_title("|DG error| (L2, interior)")
     axes[0].set_xlabel("x")
     axes[0].set_ylabel("y")
     fig.colorbar(im3, ax=axes[0])
@@ -546,11 +547,13 @@ def plot_l2_vs_nodal_modal_experiment_2d(results, log_errors=False):
         vmin=vlims["siac_l2"][0] if not log_errors else None,
         vmax=vlims["siac_l2"][1] if not log_errors else None,
     )
-    axes[1].set_title("|SIAC error| (L2, interior)")
+    if not save_name_l2:
+        axes[1].set_title("|SIAC error| (L2, interior)")
     axes[1].set_xlabel("x")
     axes[1].set_ylabel("y")
     fig.colorbar(im4, ax=axes[1])
-
+    if save_name_l2:
+        plt.savefig(f"figures/{save_name_l2}.pdf", bbox_inches="tight", dpi=300)
     plt.show()
 
     # -----------------------------
@@ -567,7 +570,8 @@ def plot_l2_vs_nodal_modal_experiment_2d(results, log_errors=False):
         vmin=vlims["dg_nm"][0] if not log_errors else None,
         vmax=vlims["dg_nm"][1] if not log_errors else None,
     )
-    axes[0].set_title("|DG error| (Nodal→Modal, interior)")
+    if not save_name_nodal:
+        axes[0].set_title("|DG error| (Nodal→Modal, interior)")
     axes[0].set_xlabel("x")
     axes[0].set_ylabel("y")
     fig.colorbar(im3, ax=axes[0])
@@ -581,78 +585,16 @@ def plot_l2_vs_nodal_modal_experiment_2d(results, log_errors=False):
         vmin=vlims["siac_nm"][0] if not log_errors else None,
         vmax=vlims["siac_nm"][1] if not log_errors else None,
     )
-    axes[1].set_title("|SIAC error| (Nodal→Modal, interior)")
+    if not save_name_nodal:
+        axes[1].set_title("|SIAC error| (Nodal→Modal, interior)")
     axes[1].set_xlabel("x")
     axes[1].set_ylabel("y")
     fig.colorbar(im4, ax=axes[1])
-
+    if save_name_nodal:
+        plt.savefig(f"figures/{save_name_nodal}.pdf", bbox_inches="tight", dpi=300)
     plt.show()
     
-    
-def add_rel_gauss_noise(Unode, rel_level=0.05, seed=62, return_noise=False):
-    """
-    Add additive Gaussian noise to a nodal DG array, with noise level
-    defined relative to the RMS magnitude of the signal.
 
-    Parameters
-    ----------
-    Unode : ndarray
-        Array of nodal values, e.g. shape (Ky, Kx, order, order).
-    rel_level : float
-        Relative noise level. For example:
-            0.01 = 1% noise
-            0.05 = 5% noise
-            0.10 = 10% noise
-    seed : int or None
-        Random seed for reproducibility.
-    return_noise : bool
-        If True, also return the generated noise array and sigma.
-
-    Returns
-    -------
-    Unode_noisy : ndarray
-        Noisy nodal data.
-    noise : ndarray, optional
-        The additive noise field.
-    sigma : float, optional
-        Standard deviation used for the Gaussian noise.
-    """
-    Unode = np.asarray(Unode, dtype=float)
-    rng = np.random.default_rng(seed)
-
-    signal_rms = np.sqrt(np.mean(Unode**2))
-    sigma = rel_level * signal_rms
-
-    noise = rng.standard_normal(size=Unode.shape) * sigma
-    Unode_noisy = Unode + noise
-
-    if return_noise:
-        return Unode_noisy, noise, sigma
-    return Unode_noisy
-
-def compute_relative_l2_and_linf(U_num, U_exact):
-    """
-    Compute relative L2 and relative Linf errors on a sampled grid.
-    """
-    err = U_num - U_exact
-
-    exact_l2 = np.linalg.norm(U_exact.ravel(), ord=2)
-    exact_linf = np.max(np.abs(U_exact))
-
-    rel_l2 = np.linalg.norm(err.ravel(), ord=2) / exact_l2
-
-    if exact_linf > 0:
-        rel_linf = np.max(np.abs(err)) / exact_linf
-    else:
-        rel_linf = np.max(np.abs(err))
-
-    return {
-        "abs_err": err,
-        "rel_l2": rel_l2,
-        "rel_linf": rel_linf,
-    }
-    
-import numpy as np
 
 def add_rel_gauss_noise(Unode, rel_level=0.05, seed=62, return_noise=False):
     """
@@ -778,6 +720,9 @@ def run_noise_trial_2d(
         moments=moments,
         BSorder=BSorder,
     )
+    
+    # Reference error metrics
+    nodal_noise_metrics = compute_relative_l2_and_linf(Unode_noisy, Unode_clean)
 
     # Error metrics
     dg_metrics = compute_relative_l2_and_linf(U_dg_trim, U_exact_trim)
@@ -793,6 +738,10 @@ def run_noise_trial_2d(
             "trim": trim,
         },
         "metrics": {
+            "noise_nodal": {
+                "rel_l2": nodal_noise_metrics["rel_l2"], 
+                "rel_linf": nodal_noise_metrics["rel_linf"]
+            },
             "dg": {
                 "rel_l2": dg_metrics["rel_l2"],
                 "rel_linf": dg_metrics["rel_linf"],
@@ -863,6 +812,8 @@ def run_noise_sweep_2d(
             "siac_rel_l2": res["metrics"]["siac"]["rel_l2"],
             "siac_rel_linf": res["metrics"]["siac"]["rel_linf"],
             "siac_abs_linf": res["metrics"]["siac"]["abs_linf"],
+            "noise_nodal_rel_l2": res["metrics"]["noise_nodal"]["rel_l2"],
+            "noise_nodal_rel_linf": res["metrics"]["noise_nodal"]["rel_linf"],
         })
 
     return records
@@ -920,6 +871,8 @@ def run_noise_monte_carlo_2d(
                 "siac_rel_l2": res["metrics"]["siac"]["rel_l2"],
                 "siac_rel_linf": res["metrics"]["siac"]["rel_linf"],
                 "siac_abs_linf": res["metrics"]["siac"]["abs_linf"],
+                "nodal_rel_l2": res["metrics"]["noise_nodal"]["rel_l2"],
+                "nodal_rel_linf": res["metrics"]["noise_nodal"]["rel_linf"],
             })
 
     df = pd.DataFrame(records)
@@ -929,12 +882,16 @@ def run_noise_monte_carlo_2d(
         .agg(
             dg_rel_l2_mean=("dg_rel_l2", "mean"),
             dg_rel_l2_std=("dg_rel_l2", "std"),
-            dg_abs_linf_mean=("dg_abs_linf", "mean"),
-            dg_abs_linf_std=("dg_abs_linf", "std"),
+            dg_rel_linf_mean=("dg_rel_linf", "mean"),
+            dg_rel_linf_std=("dg_rel_linf", "std"),
             siac_rel_l2_mean=("siac_rel_l2", "mean"),
             siac_rel_l2_std=("siac_rel_l2", "std"),
-            siac_abs_linf_mean=("siac_abs_linf", "mean"),
-            siac_abs_linf_std=("siac_abs_linf", "std"),
+            siac_rel_linf_mean=("siac_rel_linf", "mean"),
+            siac_rel_linf_std=("siac_rel_linf", "std"),
+            nodal_rel_linf_mean=("nodal_rel_linf", "mean"),
+            nodal_rel_linf_std=("nodal_rel_linf", "std"), 
+            nodal_rel_l2_mean=("nodal_rel_l2", "mean"), 
+            nodal_rel_l2_std=("nodal_rel_l2", "std")
         )
         .reset_index()
     )

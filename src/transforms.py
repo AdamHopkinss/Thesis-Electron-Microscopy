@@ -109,7 +109,7 @@ def nodal_to_modal_2d(Unode, mesh, p):
     # for ey in range(Ky):
     #     for ex in range(Kx):
     #         U_block_yx = Unode[ey, ex, :, :]                # shape (ly, lx)
-    #         A_block_yx = Vinv @ U_block_yx @ Vinv.T
+    #         A_block_yx = Vinv.T @ U_block_yx @ Vinv
     #         coeffs[ey, ex, :, :] = A_block_yx               # shape (my, mx)
     
     # fast with matmul
