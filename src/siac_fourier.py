@@ -74,8 +74,9 @@ def siac_cgam_fourier(moments: int, BSorder: int):
     b[0] = 1.0
 
                 
-    b = np.zeros((numspline))
-    b[0] = 1    # consistency (zeroth moment): integral of kernel = 1
+    # Reduced RHS: moment 0 equals 1, higher even moments equal 0
+    b = np.zeros(R, dtype=float)
+    b[0] = 1.0
     
     Piv = scipy.linalg.lu_factor(A)
     cgam = scipy.linalg.lu_solve(Piv, b)

@@ -105,7 +105,7 @@ def plot_img_zoom(img, title=None, figsize=(5, 5), vmin=0.0, vmax=1.0,
 def save_image_w_zoom(img, save_path, figsize=(5, 5), dpi=300,
                       vmin=0.0, vmax=1.0,
                       zoom_frac=(0.30, 0.70, 0.30, 0.70), 
-                      save_zoom=True):
+                      save_zoom=True, cmap="gray"):
     """
     Save a full image and a zoomed version.
 
@@ -142,7 +142,7 @@ def save_image_w_zoom(img, save_path, figsize=(5, 5), dpi=300,
 
     # Full image
     fig, ax = plt.subplots(figsize=figsize)
-    ax.imshow(arr, cmap="gray", vmin=vmin, vmax=vmax)
+    ax.imshow(arr, cmap=cmap, vmin=vmin, vmax=vmax)
     ax.axis("off")
     fig.savefig(save_path, dpi=dpi, bbox_inches="tight", pad_inches=0)
     plt.close(fig)
@@ -150,7 +150,7 @@ def save_image_w_zoom(img, save_path, figsize=(5, 5), dpi=300,
     # Zoom image
     if save_zoom:
         fig, ax = plt.subplots(figsize=figsize)
-        ax.imshow(arr_zoom, cmap="gray", vmin=vmin, vmax=vmax)
+        ax.imshow(arr_zoom, cmap=cmap, vmin=vmin, vmax=vmax)
         ax.axis("off")
         fig.savefig(zoom_path, dpi=dpi, bbox_inches="tight", pad_inches=0)
         plt.close(fig)
